@@ -1,3 +1,10 @@
+#pine_test.py
+
+# A simple python script to evaluate a models performance using the alpaca API with a paper trading account.
+
+# Update any API keys, links, or parameters as neccessary.
+
+
 import time
 import datetime
 import numpy as np
@@ -6,8 +13,8 @@ import matplotlib.pyplot as plt
 import alpaca_trade_api as tradeapi
 
 # ----- CONFIGURATION -----
-API_KEY = 'PKHUCCJ7GH21I1WNECV8'
-API_SECRET = 'YPUwCuAR228t3F48ItVyuMqoy3ISC041l9niKmwG'
+API_KEY = 'yourapikey'
+API_SECRET = 'yourapikey'
 BASE_URL = 'https://paper-api.alpaca.markets'  # Alpaca paper trading URL
 
 # Trading parameters
