@@ -49,7 +49,7 @@ Copy
 Edit
 python -m venv venv
 source venv/bin/activate   # Linux/Mac
-# or
+or
 venv\Scripts\activate      # Windows
 Install Requirements:
 
