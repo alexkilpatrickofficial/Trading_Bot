@@ -1,0 +1,13 @@
+pandas
+numpy
+ta
+scikit-learn
+deap
+gymnasium
+torch
+stable-baselines3
+scikit-optimize
+matplotlib
+alpaca-trade-api
+h5py
+tensorboard
