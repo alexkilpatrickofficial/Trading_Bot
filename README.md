@@ -40,7 +40,7 @@ Clone the Repository:
 bash
 Copy
 Edit
-git clone https://github.com/alexkilpatrickofficial/crypto-ga-ppo.git
+git clone https://github.com/alexkilpatrickofficial/Trading_Bot.git
 cd crypto-ga-ppo
 Create/Activate a Virtual Environment (optional but recommended):
 
