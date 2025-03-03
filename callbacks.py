@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 class TensorBoardCallback(BaseCallback):
     """
-    Custom callback for logging to TensorBoard.
+    Custom callback for logging basic metrics (reward, profit, balance) to TensorBoard.
     """
     def __init__(self, model_name: str, run_id: str = None, log_dir: str = TENSORBOARD_LOG_DIR):
         super().__init__(verbose=1)
@@ -36,6 +36,7 @@ class TensorBoardCallback(BaseCallback):
             total_profit = info.get("total_profit", 0.0)
             realized_profit = info.get("realized_profit", 0.0)
             balance = info.get("balance", 0.0)
+            # Log basic metrics to TensorBoard
             if self.writer:
                 self.writer.add_scalar("Metrics/Reward", reward, step)
                 self.writer.add_scalar("Metrics/Realized_Profit", realized_profit, step)
@@ -85,8 +86,6 @@ class CheckpointCallback(BaseCallback):
                 logger.info(f"[CheckpointCallback] Model checkpoint saved at {partial_model_path}")
         return True
 
-    # No _on_training_end override needed here
-
 class EarlyStoppingCallback(BaseCallback):
     """
     Early-stops training if consecutive episodes terminate 'badly'.
@@ -95,19 +94,7 @@ class EarlyStoppingCallback(BaseCallback):
     
     This callback updates its counter only once per episode boundary, and ignores episodes that are too short.
     """
-    def __init__(
-        self,
-        patience: int = 20,
-        repeat_threshold: int = 16,
-        min_episode_length: int = 10,  # Only count episodes longer than this as "meaningful"
-        verbose: int = 0
-    ):
-        """
-        :param patience: Number of consecutive bad episodes before stopping.
-        :param repeat_threshold: If repeated_action_count >= this value, count as a bad episode.
-        :param min_episode_length: Minimum episode length to be considered for early stopping.
-        :param verbose: Logging verbosity level.
-        """
+    def __init__(self, patience: int = 20, repeat_threshold: int = 16, min_episode_length: int = 10, verbose: int = 0):
         super().__init__(verbose)
         self.patience = patience
         self.repeat_threshold = repeat_threshold
@@ -117,33 +104,24 @@ class EarlyStoppingCallback(BaseCallback):
     def _init_callback(self) -> None:
         if self.model is None:
             raise ValueError("No model found. Callback must be used with an existing model.")
-        logger.info(
-            f"EarlyStoppingCallback initialized: patience={self.patience}, "
-            f"repeat_threshold={self.repeat_threshold}, min_episode_length={self.min_episode_length}"
-        )
+        logger.info(f"EarlyStoppingCallback initialized: patience={self.patience}, repeat_threshold={self.repeat_threshold}, min_episode_length={self.min_episode_length}")
 
     def _on_step(self) -> bool:
-        # Retrieve done flags and episode info from the vectorized environment.
         dones = self.locals.get("dones", None)
         infos = self.locals.get("infos", [{}])
         if dones is None:
             return True
 
         if any(dones):
-            # Assume a single episode termination for now.
             info = infos[0]
             episode_length = info.get("episode_length", None)
-            # If episode_length is not provided, assume it's long enough.
             if episode_length is None or episode_length >= self.min_episode_length:
                 repeated_count = info.get("repeated_action_count", 0)
                 is_abnormal = info.get("abnormal", False)
-                # Only count if termination is not due to end-of-data.
                 if not info.get("end_of_data", False) and (repeated_count >= self.repeat_threshold or is_abnormal):
                     self.counter += 1
                     if self.verbose > 0:
-                        logger.info(
-                            f"EarlyStopping: Episode terminated badly (length={episode_length}, repeated_action_count={repeated_count}, abnormal={is_abnormal}). Counter: {self.counter}/{self.patience}"
-                        )
+                        logger.info(f"EarlyStopping: Episode terminated badly (length={episode_length}, repeated_action_count={repeated_count}, abnormal={is_abnormal}). Counter: {self.counter}/{self.patience}")
                 else:
                     self.counter = 0
             else:
@@ -152,5 +130,48 @@ class EarlyStoppingCallback(BaseCallback):
         if self.counter >= self.patience:
             if self.verbose > 0:
                 logger.info("EarlyStopping: Patience exceeded, stopping training.")
-            return False  # Stops training.
+            return False
         return True
+
+class TrainingPerformanceCallback(BaseCallback):
+    """
+    Custom callback to log detailed training performance metrics to TensorBoard.
+    This includes policy loss, value loss, total loss, explained variance,
+    and the auxiliary loss (price prediction loss). Separate charts will be
+    available for profit-based performance and price prediction accuracy.
+    """
+    def __init__(self, log_dir, verbose=0):
+        super(TrainingPerformanceCallback, self).__init__(verbose)
+        self.log_dir = log_dir
+        self.writer = None
+
+    def _on_training_start(self) -> None:
+        os.makedirs(self.log_dir, exist_ok=True)
+        self.writer = SummaryWriter(self.log_dir)
+        logger.info("TrainingPerformanceCallback: Training started.")
+
+    def _on_rollout_end(self) -> None:
+        step = self.num_timesteps
+        metrics = {}
+        # Retrieve training metrics from the model attributes, if available.
+        if hasattr(self.model, 'policy_loss'):
+            metrics['Policy Loss'] = self.model.policy_loss
+        if hasattr(self.model, 'value_loss'):
+            metrics['Value Loss'] = self.model.value_loss
+        if hasattr(self.model, 'total_loss'):
+            metrics['Total Loss'] = self.model.total_loss
+        if hasattr(self.model, 'explained_variance'):
+            metrics['Explained Variance'] = self.model.explained_variance
+        if hasattr(self.model, 'aux_loss'):
+            aux_loss_val = self.model.aux_loss.item() if isinstance(self.model.aux_loss, torch.Tensor) else self.model.aux_loss
+            metrics['Aux Loss'] = aux_loss_val
+
+        for key, value in metrics.items():
+            self.writer.add_scalar(f"Training/{key}", value, step)
+            logger.debug(f"TrainingPerformanceCallback: Logged {key} = {value} at step {step}")
+
+    def _on_training_end(self) -> None:
+        if self.writer:
+            self.writer.flush()
+            self.writer.close()
+        logger.info("TrainingPerformanceCallback: Training ended.")
