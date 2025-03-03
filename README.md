@@ -2,51 +2,71 @@
 
 A **Genetic Algorithm (GA)** project that evolves **chromosomes** (architectures) for a **Hybrid PPO** trading model in a cryptocurrency environment. This system combines **reinforcement learning** (via [Stable-Baselines3 PPO](https://github.com/DLR-RM/stable-baselines3)) with an **auxiliary price prediction** head to improve feature extraction and trading performance.
 
+---
+
 ## Table of Contents
 - [Overview](#overview)
 - [Features](#features)
+  - [Genetic Algorithm](#genetic-algorithm)
+  - [Hybrid PPO](#hybrid-ppo)
+  - [Callbacks](#callbacks)
+  - [Custom Environment](#custom-environment)
+  - [Data Preprocessing](#data-preprocessing)
 - [Installation](#installation)
 - [Usage](#usage)
-  - [Data Preprocessing](#data-preprocessing)
+  - [Data Preprocessing](#data-preprocessing-1)
   - [Running the GA + PPO Training](#running-the-ga--ppo-training)
+  - [Monitoring Training](#monitoring-training)
 - [Project Structure](#project-structure)
 - [Technical Highlights](#technical-highlights)
 - [Roadmap / Future Work](#roadmap--future-work)
 - [License](#license)
 - [Author / Contact](#author--contact)
 
+---
+
 ## Overview
+
 This repository implements a **hybrid approach** for cryptocurrency trading using:
 
 - **Genetic Algorithms (GA)** to evolve model architectures and hyperparameters (chromosomes).
 - **Stable-Baselines3 PPO** for on-policy reinforcement learning.
 - An **auxiliary price-prediction head** that provides an extra learning signal to the feature extractor, even when trading performance is suboptimal.
 
+In our system, the GA evolves various modular architectures (using components such as CNNs, LSTMs, TCNs, and MLPs) which are then used by a custom Hybrid PPO policy. The policy not only focuses on profit-based objectives but also on accurate price prediction, ensuring robust feature learning even when trading decisions incur losses.
+
+---
+
 ## Features
 
 ### Genetic Algorithm
-- Evolves different neural architectures and hyperparameters.
-- Automatic architecture validation via `validate_chromosome`.
-- Modular block design (CNN, LSTM, TCN, MLP, etc.) combined in a flexible pipeline.
+- **Architecture Evolution**: Evolve neural architectures and hyperparameters encoded as chromosomes.
+- **Validation**: Automatic validation of chromosomes via `validate_chromosome` and `modular_shape_is_valid` functions.
+- **Modular Design**: Supports building architectures from multiple blocks (CNN, LSTM, TCN, MLP, etc.) as specified in the chromosome.
 
 ### Hybrid PPO
-- Utilizes Stable-Baselines3 PPO for on-policy learning.
-- Integrates an auxiliary MSE loss for price prediction alongside the main profit-based objective.
-- Custom policy (`HybridPolicy`) dynamically handles action shape mismatches.
+- **On-Policy Learning**: Uses Stable-Baselines3 PPO for training the trading agent.
+- **Auxiliary Loss**: Incorporates an auxiliary MSE loss for price prediction, allowing the feature extractor to keep learning even when trading rewards are negative.
+- **Custom Policy (`HybridPolicy`)**: Manages action shape consistency and logs separate metrics for profit-based and price prediction performance.
 
 ### Callbacks
-- **TensorBoardCallback** for logging training metrics.
-- **CheckpointCallback** for model saving at regular intervals.
-- **EarlyStoppingCallback** to halt training if multiple bad episodes occur.
+- **TensorBoardCallback**: Logs basic environment metrics (reward, profit, balance) to TensorBoard.
+- **CheckpointCallback**: Saves model checkpoints at regular intervals.
+- **EarlyStoppingCallback**: Monitors episodes for abnormal terminations and stops training if a threshold is exceeded.
+- **TrainingPerformanceCallback**: Logs detailed training metrics such as policy loss, value loss, total loss, explained variance, and auxiliary (price prediction) loss for separate visualizations.
 
 ### Custom Environment
-- `MultiStockTradingEnv` with a multi-discrete action space (`[3, 10]` → buy/sell/hold plus trade size).
-- Robust logging and shape-handling to ensure proper action conversion.
+- **Simplified Action Space**: Uses a `Discrete(3)` action space: Hold, Buy, or Sell.
+- **Robust Observation Handling**: Processes raw data into a flattened observation vector with technical indicators, account metrics, and extra features.
+- **Logging and Debugging**: Detailed logging ensures that actions, observations, and rewards are processed as expected.
 
 ### Data Preprocessing
-- Processes raw crypto CSV data via `main_preprocessing.py`.
-- Saves preprocessed data to HDF5.
-- Trains and saves a scaler for feature normalization.
+- **Raw Data Handling**: Preprocesses raw crypto CSV data (e.g., `Gemini_BTCUSD_1h.csv`).
+- **Technical Indicator Calculation**: Computes required technical indicators and UT Bot candle signals.
+- **Normalization and Scaling**: Applies scaling (using `RobustScaler` by default) to continuous features and saves the scaler for future runs.
+- **Data Caching**: Caches preprocessed data in HDF5 and pickle formats for efficient reloading.
+
+---
 
 ## Installation
 
@@ -59,8 +79,10 @@ cd Trading_Bot
 ### Create/Activate a Virtual Environment
 ```bash
 python -m venv venv
+
 # On Linux/Mac:
 source venv/bin/activate
+
 # On Windows:
 venv\Scripts\activate
 ```
@@ -70,81 +92,88 @@ venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### GPU Check (Optional)
-Ensure that PyTorch (with CUDA support) is installed properly if you want GPU acceleration.
+### (Optional) GPU Check
+Ensure that PyTorch with CUDA support is installed properly if you plan to use GPU acceleration.
+
+---
 
 ## Usage
 
 ### Data Preprocessing
 Before running the GA optimization, process your raw dataset:
-
 ```bash
 python main_preprocessing.py
 ```
 This script:
 - Loads raw CSV data (e.g., `Gemini_BTCUSD_1h.csv`).
-- Saves dataset location for future runs.
-- Preprocesses data, normalizes features, and saves output to HDF5.
+- Saves the dataset location for future runs.
+- Preprocesses data (normalizes, calculates indicators, generates UT Bot signals).
+- Saves the processed data to HDF5.
 - Trains and saves a scaler for feature normalization.
 
 ### Running the GA + PPO Training
-Ensure data preprocessing is completed, then start the GA optimization:
-
+Ensure data preprocessing is complete, then start the GA optimization:
 ```bash
 python main.py
 ```
 This script:
 - Loads preprocessed data.
-- Initializes or resumes GA population.
-- Evolves chromosomes using `evaluate(...)`.
-- Trains PPO models with `HybridPolicy`.
+- Initializes or resumes a GA population.
+- Evaluates each chromosome by creating a PPO model with the custom `HybridPolicy`.
+- Evolves chromosomes based on performance metrics.
 
-### Monitor Training
-Launch TensorBoard to track training progress:
+### Monitoring Training
+Launch TensorBoard to track training progress and detailed performance metrics:
 ```bash
 tensorboard --logdir=logs
 ```
-Navigate to [http://localhost:6006](http://localhost:6006) to view metrics.
+Then visit [http://localhost:6006](http://localhost:6006) in your browser.
+
+---
 
 ## Project Structure
-
 ```
 Trading_Bot/
 ├── main.py                   # GA optimization & PPO training orchestration
 ├── evaluation.py             # Chromosome evaluation & model training
 ├── envs/
-│   ├── multi_stock_env.py    # Custom trading environment
-├── hybrid_policy.py          # Custom HybridPolicy for PPO
-├── models.py                 # Modular architecture builder (CNN, LSTM, etc.)
-├── ga_utils.py               # Genetic Algorithm utilities
-├── callbacks.py              # Custom callbacks for logging, checkpointing
-├── data_preprocessing.py     # Data processing utilities
-├── main_preprocessing.py     # Preprocesses and normalizes dataset
+│   └── multi_stock_env.py    # Custom trading environment (Discrete action space)
+├── hybrid_policy.py          # Custom HybridPolicy for PPO with auxiliary price prediction
+├── models.py                 # Modular architecture builder (DynamicHybridFeatureExtractor, ModularBlock)
+├── ga_utils.py               # Genetic Algorithm utilities (crossover, mutation, selection, etc.)
+├── callbacks.py              # Custom callbacks for logging, checkpointing, early stopping, training performance
+├── data_preprocessing.py     # Data preprocessing utilities (loading, indicator calculation, scaling)
+├── main_preprocessing.py     # Script to preprocess and normalize dataset
 ├── requirements.txt          # Dependency list
+├── config.py                 # Configuration: feature columns, file paths, constants, etc.
 ```
 
+---
+
 ## Technical Highlights
+- **Hybrid Neural Network**: Combining feature extraction for trading and price prediction within one policy.
+- **TensorBoard Logging**: Detailed metrics for both trading performance and price-prediction loss.
+- **Discrete Action Space**: Eliminates dimensional mismatches and simplifies policy training.
+- **Genetic Evolution of Architecture**: Allows the system to discover effective architectures automatically.
 
-### Multi-Discrete Action Space
-Supports actions defined as `[3, 10]` (buy/sell/hold plus discrete trade size). Custom shape-handling ensures proper action conversion.
-
-### Auxiliary Loss
-The `HybridPolicy` merges PPO loss with an auxiliary MSE loss for price prediction, ensuring feature learning even when trading decisions are suboptimal.
-
-### Evolutionary Architecture Search
-The GA evolves modular architectures (CNN, LSTM, TCN, MLP) and hyperparameters, validated via simulation in `simulate_modular_blocks`.
+---
 
 ## Roadmap / Future Work
+- **Multi-Discrete Action Support**: Potentially reintroduce multi-discrete actions (e.g., size of Buy/Sell).
+- **Full Exchange Emulation**: Expand environment to handle partial fills, slippage, and more realistic trading conditions.
+- **Advanced Indicators**: Incorporate additional indicators and external signals (e.g., sentiment analysis).
+- **Distributed Training**: Parallelize GA population evaluation for faster experimentation.
 
-- **Custom Rollout Buffer**: Handle multi-discrete action shape issues.
-- **Data Pipeline Enhancements**: Support multi-asset trading.
-- **Enhanced Reward Shaping**: Improve reward signals beyond profit-based metrics.
-- **Scaling Up**: Implement multi-agent setups for parallel training.
+---
 
 ## License
-This project is licensed under the GRU Public License.
+This project is licensed under the **GRU Public License**.
+
+---
 
 ## Author / Contact
-**Alex Kilpatrick** (@alexkilpatrickofficial)  
-Email: [alexkilpatrick@proton.me](mailto:alexkilpatrick@proton.me)
+- **Alex Kilpatrick**  
+  - GitHub: [@alexkilpatrickofficial](https://github.com/alexkilpatrickofficial)  
+  - Email: [alexkilpatrick@proton.me](mailto:alexkilpatrick@proton.me)
 
+Feel free to open an issue on GitHub if you encounter any problems or have suggestions. Enjoy experimenting with this Hybrid PPO + GA approach for crypto trading!
