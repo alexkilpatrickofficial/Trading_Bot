@@ -118,13 +118,13 @@ def main():
         current_gen = start_gen + 1
         logger.info(f"Resuming GA from generation {current_gen}")
     else:
-        population = toolbox.population(n=5)
+        population = toolbox.population(n=15)
         for ind in population:
             init_individual(ind)
         current_gen = 1
         logger.info(f"Initialized new population with {len(population)} individuals.")
 
-    n_generations = 10
+    n_generations = 12
     tb_process = launch_tensorboard(os.path.join(LOG_DIR, "tensorboard_logs"), port=6006)
     HEAVY_PENALTY = (-1e6, -1e6, 1e6)
 

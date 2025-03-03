@@ -5,7 +5,6 @@ import pandas as pd
 import logging
 import pickle
 import os
-from collections import deque
 import itertools
 import time
 import torch
@@ -39,7 +38,8 @@ class MultiStockTradingEnv(gymnasium.Env):
         mavg_weight3: float = 0.001,
         mavg_weight6: float = 0.0005,
         mavg_weight12: float = 0.0001,
-        include_past_actions: bool = True,  # Optionally include past actions
+        # Removing previous actions: always False.
+        include_past_actions: bool = False,
         use_aux_reward: bool = True,        # Enable separate auxiliary reward
         main_reward_weight: float = 1.0,     # Weight for main reward
         aux_reward_weight: float = 0.5       # Weight for auxiliary reward
@@ -98,8 +98,8 @@ class MultiStockTradingEnv(gymnasium.Env):
         base_feature_count = len(CONTINUOUS_FEATURES) + len(BINARY_FEATURES) + len(ACCOUNT_METRICS)
         total_feature_count = base_feature_count + EXTRA_FEATURES_PER_TIMESTEP
 
-        # Extra action features if enabled.
-        extra_action_features = 32 if include_past_actions else 0
+        # No extra action features since previous actions are removed.
+        extra_action_features = 0
 
         # Define observation space (flattened vector).
         obs_dim = self.window_size * total_feature_count + extra_action_features
@@ -109,7 +109,8 @@ class MultiStockTradingEnv(gymnasium.Env):
             shape=(obs_dim,),
             dtype=np.float32,
         )
-        self.action_space = spaces.MultiDiscrete([3, 10])
+        # Update action space: only 3 possible actions: 0=Hold, 1=Buy, 2=Sell.
+        self.action_space = spaces.Discrete(3)
 
         self.current_step = 0
         self.np_random = np.random.RandomState()
@@ -118,11 +119,6 @@ class MultiStockTradingEnv(gymnasium.Env):
         self.mavg_weight3 = mavg_weight3
         self.mavg_weight6 = mavg_weight6
         self.mavg_weight12 = mavg_weight12
-
-        # Initialize action history.
-        self.include_past_actions = include_past_actions
-        if self.include_past_actions:
-            self.action_history = deque([(0, 0)] * 16, maxlen=16)
 
     def reset(self, *, seed=None, options=None):
         if seed is not None:
@@ -136,11 +132,8 @@ class MultiStockTradingEnv(gymnasium.Env):
         self.hold_counter = 0
         self.inactivity_steps = 0
 
-        if self.include_past_actions:
-            self.action_history = deque([(0, 0)] * 16, maxlen=16)
-
         self.prices = self.stock_data["BTCUSD"]["close"].values
-        self.sell_profit_history = deque(maxlen=12)
+        self.sell_profit_history = []
         max_start = len(self.prices) - self.window_size - 1
         if max_start <= self.window_size:
             raise ValueError("Not enough data to create a valid episode.")
@@ -162,7 +155,7 @@ class MultiStockTradingEnv(gymnasium.Env):
     def _construct_info(self, reward=0.0, terminate=False):
         current_price = self._get_price(self.current_step)
         unrealized_profit = (current_price - self.avg_buy_price) * self.position if self.position > 0 else 0.0
-        return {
+        info = {
             "total_profit": self.total_profit,
             "realized_profit": self.realized_profit,
             "balance": self.balance,
@@ -174,17 +167,17 @@ class MultiStockTradingEnv(gymnasium.Env):
             "repeated_action_count": self.repeated_action_count,
             "terminate": terminate
         }
+        logger.debug(f"[_construct_info] {info}")
+        return info
 
     def _get_observation(self):
         start_idx = self.current_step - self.window_size
         data_slice = self.stock_data["BTCUSD"].iloc[start_idx:self.current_step]
         
-        # Ensure continuous_data is 2D even if only one column is selected.
         continuous_data = np.array(data_slice[CONTINUOUS_FEATURES].values, dtype=np.float32)
         if continuous_data.ndim == 1:
             continuous_data = continuous_data.reshape(-1, 1)
         
-        # Ensure binary_data is 2D.
         binary_data = np.array(data_slice[BINARY_FEATURES].values, dtype=np.float32)
         if binary_data.ndim == 1:
             binary_data = binary_data.reshape(-1, 1)
@@ -200,11 +193,6 @@ class MultiStockTradingEnv(gymnasium.Env):
         logger.debug(f"Observation matrix shape (before flatten): {features.shape}")
         observation = features.flatten()
 
-        if self.include_past_actions:
-            past_actions = np.array(list(self.action_history), dtype=np.float32).flatten()
-            logger.debug(f"Past actions shape: {past_actions.shape}")
-            observation = np.concatenate([observation, past_actions])
-
         observation = np.nan_to_num(observation, nan=0.0, posinf=1e9, neginf=-1e9)
         assert observation.shape == self.observation_space.shape, (
             f"Observation shape mismatch: expected {self.observation_space.shape}, got {observation.shape}"
@@ -216,62 +204,40 @@ class MultiStockTradingEnv(gymnasium.Env):
 
     def step(self, action):
         try:
-            # --------------------- Debug & Shape Handling ---------------------
             logger.debug(f"[step] Received raw action: {action} (type: {type(action)})")
+            # For Discrete action space, action is expected to be a scalar.
             if isinstance(action, torch.Tensor):
-                logger.debug(f"[step] Action is a torch.Tensor with shape {action.shape}. Converting to NumPy.")
-                action = action.detach().cpu().numpy()
+                logger.debug(f"[step] Action is a torch.Tensor with shape {action.shape}. Converting to scalar.")
+                action = action.detach().cpu().item()
+            elif isinstance(action, (np.ndarray, list)):
+                # If action is an array or list, extract the scalar value.
+                if hasattr(action, "__iter__"):
+                    action = int(action[0])
+                else:
+                    action = int(action)
+            else:
+                action = int(action)
+            logger.debug(f"[step] Final action value: {action}")
 
-            # If the action is still a np.ndarray, check its shape
-            if isinstance(action, np.ndarray):
-                logger.debug(f"[step] Action is now a NumPy array with shape {action.shape}.")
-                # If shape is (1,2), flatten it to (2,)
-                if action.shape == (1, 2):
-                    logger.debug("[step] Flattening action from (1,2) to (2,).")
-                    action = action[0]  # shape now (2,)
-
-                # If shape is just (), interpret it as a scalar
-                elif action.shape == ():
-                    logger.debug("[step] Action shape is (), interpreting as a single scalar action.")
-                    action = [int(action)]
-
-            # Convert to list or tuple if not already
-            if not hasattr(action, '__iter__'):
-                action = [action]  # single scalar case
-            elif isinstance(action, np.ndarray):
-                action = action.tolist()
-
-            logger.debug(f"[step] Action after shape fix: {action} (length: {len(action)})")
-
-            # Final assertion: we need exactly 2 elements
-            if len(action) != 2:
-                raise ValueError(f"[step] Expected action of length 2, got length {len(action)}. "
-                                f"Action content: {action}")
-
-            # Unpack two elements
-            action_type, trade_size_raw = action
-
-            # --------------- Step Logic ---------------
             if self.current_step >= len(self.prices) - 1:
-                # End-of-data: treat as done.
                 return self._terminate_episode(reward=0.0, error="end_of_data")
 
-            # Convert discrete trade_size into fraction.
-            trade_fraction = (trade_size_raw + 1) / 10.0
+            # Since action is a single integer: 0=Hold, 1=Buy, 2=Sell.
+            action_type = action
+            trade_fraction = 1.0  # Fixed trade fraction
+
             current_price = self._get_price(self.current_step)
             prev_price = self._get_price(self.current_step - 1) if self.current_step > 0 else current_price
 
             if np.isnan(current_price) or np.isnan(prev_price):
                 raise ValueError("NaN detected in price data.")
 
-            # Track repeated actions
             if self.last_action_type is None or action_type != self.last_action_type:
                 self.last_action_type = action_type
                 self.repeated_action_count = 1
             else:
                 self.repeated_action_count += 1
 
-            # Calculate base reward.
             step_reward = 0.0
             realized_profit_this_step = 0.0
 
@@ -287,28 +253,26 @@ class MultiStockTradingEnv(gymnasium.Env):
                     self.inactivity_steps += 1
                     self.hold_counter = 0
             else:
-                logger.warning(f"Unknown action type: {action_type}")
+                logger.warning(f"[step] Unknown action type: {action_type}")
 
             if action_type != 0:
                 self.hold_counter = 0
 
-            if self.include_past_actions:
-                self.action_history.append((action_type, trade_size_raw))
+            # Log reward components before updating state.
+            logger.debug(f"[step] Base reward: {step_reward}, Realized profit this step: {realized_profit_this_step}")
 
-            # Update profit and step counters
+            # Update profit and step counters.
             self.total_profit += realized_profit_this_step
             self.realized_profit += realized_profit_this_step
             self.current_step += 1
             self.episode_length += 1
 
-            # Compute incremental reward based on adjusted balance change
             current_price = self._get_price(self.current_step)
             unrealized_profit = (current_price - self.avg_buy_price) * self.position if self.position > 0 else 0.0
             adjusted_balance = self.balance + unrealized_profit
             incremental_reward = (adjusted_balance - self.previous_adjusted_balance) / self.initial_balance
             self.previous_adjusted_balance = adjusted_balance
 
-            # Compute auxiliary reward components
             main_reward, aux_reward = self._calculate_reward(realized_profit_this_step, action_type)
             combined_reward = self.main_reward_weight * main_reward
             if self.use_aux_reward:
@@ -316,7 +280,10 @@ class MultiStockTradingEnv(gymnasium.Env):
 
             final_reward = step_reward + incremental_reward + combined_reward
 
-            # Determine if episode is done
+            # Log computed reward components.
+            logger.debug(f"[step] Incremental reward: {incremental_reward}, Main reward: {main_reward}, Aux reward: {aux_reward}, Final reward: {final_reward}")
+            logger.debug(f"[step] New balance: {self.balance}, Position: {self.position}, Total profit: {self.total_profit}")
+
             done = self._check_termination(adjusted_balance)
             obs = self._get_observation()
             info = self._construct_info(reward=final_reward, terminate=done)
@@ -369,8 +336,7 @@ class MultiStockTradingEnv(gymnasium.Env):
         self.balance -= total_cost
         self.balance = max(0.0, round(self.balance, 2))
 
-        logger.debug(f"Bought {units_to_buy:.4f} units at effective price {effective_price:.2f}; "
-                     f"Fee: {fee:.2f}, New balance: {self.balance:.2f}")
+        logger.debug(f"Bought {units_to_buy:.4f} units at effective price {effective_price:.2f}; Fee: {fee:.2f}, New balance: {self.balance:.2f}")
         return -fee * 0.5
 
     def _sell(self, current_price, trade_fraction):
@@ -399,9 +365,7 @@ class MultiStockTradingEnv(gymnasium.Env):
             self.position = 0.0
             self.avg_buy_price = 0.0
 
-        logger.debug(f"Sold {units_to_sell:.4f} units at effective price {effective_price:.2f}; "
-                     f"Fee: {fee:.2f}, Realized profit: {realized_profit:.2f}, "
-                     f"New balance: {self.balance:.2f}")
+        logger.debug(f"Sold {units_to_sell:.4f} units at effective price {effective_price:.2f}; Fee: {fee:.2f}, Realized profit: {realized_profit:.2f}, New balance: {self.balance:.2f}")
         self.sell_profit_history.append(realized_profit)
         return realized_profit
 
@@ -487,7 +451,6 @@ class MultiStockTradingEnv(gymnasium.Env):
         self._terminate_episode_info = final_info
         obs = self._get_observation()
         logger.debug(f"Terminating episode. Final info: {final_info}")
-        # Return five values: obs, reward, terminated, truncated, final_info.
         return obs, reward, True, False, final_info
 
     def render(self):

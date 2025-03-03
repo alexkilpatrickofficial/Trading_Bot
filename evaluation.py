@@ -40,19 +40,22 @@ def evaluate(individual, **kwargs):
     Returns:
         tuple: (total_reward, sharpe, -volatility) or a heavy penalty tuple if errors occur.
     """
+    # Retrieve keyword arguments
     do_train = kwargs.get("do_train", True)
     min_train_timesteps = kwargs.get("min_train_timesteps", 50000)
     stock_data = kwargs.get("stock_data", None)
     window_size = kwargs.get("window_size", 16)
     current_gen = kwargs.get("current_gen", 1)
     log_dir = kwargs.get("LOG_DIR", os.path.join(os.getcwd(), "logs"))
-
+    
     if stock_data is None:
         print("No stock_data provided to evaluate()!")
         return HEAVY_PENALTY
 
     print(f"\n=== Evaluating Individual {individual.id} ===")
-
+    # Log basic evaluation info
+    print("Starting environment feature detection...")
+    
     # 1) Create a temporary environment to detect per-timestep feature count.
     try:
         dummy_chrom = random_chromosome(n_features=TOTAL_FEATURE_COUNT)
@@ -152,7 +155,7 @@ def evaluate(individual, **kwargs):
             ent_coef=forced_ent_coef,
             policy_kwargs=policy_kwargs,
             device='cuda',
-            n_steps=1024,
+            n_steps=2048,
         )
         print("New PPO model created.")
 
@@ -192,20 +195,16 @@ def evaluate(individual, **kwargs):
         abnormal = False
         normal_termination = False
         for step in range(total_timesteps):
-            # Do NOT squeeze the action; let it remain batched.
             action, _ = model.predict(obs, deterministic=True)
-            print(f"Step {step}: Action shape: {action.shape}")  # Expected shape: (1, 2)
+            print(f"Step {step}: Action shape: {action.shape}")  # Expected shape: (1, action_dim)
 
-            # Handle reshaping if needed: Ensure action shape is (1, action_dim) or (action_dim,)
             if action.ndimension() == 1:
-                action = action.unsqueeze(0)  # Add batch dimension if needed
-            print(f"Step {step}: Action reshaped to: {action.shape}")  # Check shape consistency
+                action = action.unsqueeze(0)
+            print(f"Step {step}: Action reshaped to: {action.shape}")
 
-            # Step in environment with action (ensure proper action shape)
             obs, reward, done, truncated, info = env.step(action)
             print(f"Step {step}: New obs shape: {obs.shape}, Reward: {reward}, Done: {done}")
-
-            rewards.append(reward[0])  # reward is an array with 1 element.
+            rewards.append(reward if isinstance(reward, float) else reward[0])
             print("Info:", info)
 
             if done.any():
