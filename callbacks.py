@@ -150,6 +150,11 @@ class TrainingPerformanceCallback(BaseCallback):
         self.writer = SummaryWriter(self.log_dir)
         logger.info("TrainingPerformanceCallback: Training started.")
 
+    def _on_step(self) -> bool:
+        # Implement _on_step to satisfy the abstract method.
+        # If no step-level logging is needed, simply return True.
+        return True
+
     def _on_rollout_end(self) -> None:
         step = self.num_timesteps
         metrics = {}

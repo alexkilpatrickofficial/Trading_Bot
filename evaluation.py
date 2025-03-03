@@ -53,7 +53,6 @@ def evaluate(individual, **kwargs):
         return HEAVY_PENALTY
 
     print(f"\n=== Evaluating Individual {individual.id} ===")
-    # Log basic evaluation info
     print("Starting environment feature detection...")
     
     # 1) Create a temporary environment to detect per-timestep feature count.
@@ -162,15 +161,21 @@ def evaluate(individual, **kwargs):
     # 4) Training phase.
     try:
         if do_train and model.num_timesteps < min_train_timesteps:
-            from callbacks import TensorBoardCallback, CheckpointCallback, EarlyStoppingCallback
+            # Import the additional callback for logging training performance.
+            from callbacks import TensorBoardCallback, CheckpointCallback, EarlyStoppingCallback, TrainingPerformanceCallback
+            
             tb_callback = TensorBoardCallback(
                 model_name="PPO_TradingHybrid",
                 run_id=f"gen_{current_gen}_ind_{individual.id}",
                 log_dir=get_tensorboard_gen_log_dir(current_gen, log_dir=TENSORBOARD_LOG_DIR)
             )
-            ckpt_callback = CheckpointCallback(save_freq=5000, model_path=model_path, verbose=1)
+            # Lower the save frequency to 1000 steps so checkpoints occur more frequently.
+            ckpt_callback = CheckpointCallback(save_freq=1000, model_path=model_path, verbose=1)
             early_stop = EarlyStoppingCallback(patience=20, repeat_threshold=32, verbose=1)
-            callback_list = CallbackList([tb_callback, ckpt_callback, early_stop])
+            tp_callback = TrainingPerformanceCallback(
+                log_dir=get_tensorboard_gen_log_dir(current_gen, log_dir=TENSORBOARD_LOG_DIR) + f"/training_ind_{individual.id}"
+            )
+            callback_list = CallbackList([tb_callback, ckpt_callback, early_stop, tp_callback])
             print(f"Training model for {individual.id} starting from {model.num_timesteps} timesteps.")
             model.learn(total_timesteps=total_timesteps, callback=callback_list, reset_num_timesteps=False)
             print(f"Training completed. Model reached {model.num_timesteps} timesteps.")
@@ -207,7 +212,8 @@ def evaluate(individual, **kwargs):
             rewards.append(reward if isinstance(reward, float) else reward[0])
             print("Info:", info)
 
-            if done.any():
+            # Updated termination check for a non-vectorized environment.
+            if done:
                 if any(info_item.get("end_of_data", False) for info_item in info):
                     print("End of data reached. Ending episode normally.")
                     normal_termination = True
