@@ -137,8 +137,8 @@ class TrainingPerformanceCallback(BaseCallback):
     """
     Custom callback to log detailed training performance metrics to TensorBoard.
     This includes policy loss, value loss, total loss, explained variance,
-    and the auxiliary loss (price prediction loss). Separate charts will be
-    available for profit-based performance and price prediction accuracy.
+    and the auxiliary loss (price prediction loss).
+    Metrics are retrieved from the model's policy.
     """
     def __init__(self, log_dir, verbose=0):
         super(TrainingPerformanceCallback, self).__init__(verbose)
@@ -151,24 +151,24 @@ class TrainingPerformanceCallback(BaseCallback):
         logger.info("TrainingPerformanceCallback: Training started.")
 
     def _on_step(self) -> bool:
-        # Implement _on_step to satisfy the abstract method.
-        # If no step-level logging is needed, simply return True.
+        # No per-step logging required; simply satisfy the abstract method.
         return True
 
     def _on_rollout_end(self) -> None:
         step = self.num_timesteps
         metrics = {}
-        # Retrieve training metrics from the model attributes, if available.
-        if hasattr(self.model, 'policy_loss'):
-            metrics['Policy Loss'] = self.model.policy_loss
-        if hasattr(self.model, 'value_loss'):
-            metrics['Value Loss'] = self.model.value_loss
-        if hasattr(self.model, 'total_loss'):
-            metrics['Total Loss'] = self.model.total_loss
-        if hasattr(self.model, 'explained_variance'):
-            metrics['Explained Variance'] = self.model.explained_variance
-        if hasattr(self.model, 'aux_loss'):
-            aux_loss_val = self.model.aux_loss.item() if isinstance(self.model.aux_loss, torch.Tensor) else self.model.aux_loss
+        # Retrieve training metrics from the model's policy (HybridPolicy)
+        policy = self.model.policy
+        if hasattr(policy, 'policy_loss'):
+            metrics['Policy Loss'] = policy.policy_loss
+        if hasattr(policy, 'value_loss'):
+            metrics['Value Loss'] = policy.value_loss
+        if hasattr(policy, 'total_loss'):
+            metrics['Total Loss'] = policy.total_loss
+        if hasattr(policy, 'explained_variance'):
+            metrics['Explained Variance'] = policy.explained_variance
+        if hasattr(policy, 'aux_loss'):
+            aux_loss_val = policy.aux_loss.item() if isinstance(policy.aux_loss, torch.Tensor) else policy.aux_loss
             metrics['Aux Loss'] = aux_loss_val
 
         for key, value in metrics.items():
