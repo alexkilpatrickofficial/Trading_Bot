@@ -199,7 +199,7 @@ def load_crypto_data_optimized(data, start_date='2020-01-01', end_date=None, cac
 
         # 4) Create cyclical day and month features.
         day_of_week = data['date'].dt.dayofweek  # 0..6
-        data['day_sin'] = np.sin(2 * np.pi * day_of_week / 7)
+        data.loc[:, 'day_sin'] = np.sin(2 * np.pi * day_of_week / 7)
         data.loc[:, 'day_cos'] = np.cos(2 * np.pi * day_of_week / 7)
 
 
