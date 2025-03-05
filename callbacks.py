@@ -13,12 +13,19 @@ logger = logging.getLogger(__name__)
 class TensorBoardCallback(BaseCallback):
     """
     Custom callback for logging basic metrics (reward, profit, balance) to TensorBoard.
+    If aggregate is True, all logs are written to a common directory for the given model name;
+    otherwise, a unique run_id is generated and used for the log subdirectory.
     """
-    def __init__(self, model_name: str, run_id: str = None, log_dir: str = TENSORBOARD_LOG_DIR):
+    def __init__(self, model_name: str, run_id: str = None, log_dir: str = TENSORBOARD_LOG_DIR, aggregate: bool = True):
         super().__init__(verbose=1)
         self.model_name = model_name
-        self.run_id = run_id or f"run_{int(time.time())}"
-        self.log_dir = os.path.join(log_dir, self.model_name, self.run_id)
+        self.aggregate = aggregate
+        if self.aggregate:
+            # Use a common directory for aggregated logs.
+            self.log_dir = os.path.join(log_dir, self.model_name)
+        else:
+            self.run_id = run_id or f"run_{int(time.time())}"
+            self.log_dir = os.path.join(log_dir, self.model_name, self.run_id)
         self.writer = None
         self.performance_log = []
 
@@ -36,7 +43,6 @@ class TensorBoardCallback(BaseCallback):
             total_profit = info.get("total_profit", 0.0)
             realized_profit = info.get("realized_profit", 0.0)
             balance = info.get("balance", 0.0)
-            # Log basic metrics to TensorBoard
             if self.writer:
                 self.writer.add_scalar("Metrics/Reward", reward, step)
                 self.writer.add_scalar("Metrics/Realized_Profit", realized_profit, step)
@@ -136,19 +142,27 @@ class EarlyStoppingCallback(BaseCallback):
 class TrainingPerformanceCallback(BaseCallback):
     """
     Custom callback to log detailed training performance metrics to TensorBoard.
-    This includes policy loss, value loss, total loss, explained variance,
-    and the auxiliary loss (price prediction loss).
+    This includes policy loss, value loss, total loss, explained variance, and auxiliary loss.
+    Additional metrics such as gradient norm and learning rate are logged for diagnostic purposes.
     Metrics are retrieved from the model's policy.
+    If aggregate is True, a common log directory is used.
     """
-    def __init__(self, log_dir, verbose=0):
+    def __init__(self, log_dir: str, verbose: int = 0, aggregate: bool = True, model_name: str = "TrainingPerformance"):
         super(TrainingPerformanceCallback, self).__init__(verbose)
-        self.log_dir = log_dir
+        self.aggregate = aggregate
+        if self.aggregate:
+            self.log_dir = os.path.join(log_dir, model_name)
+        else:
+            run_id = f"run_{int(time.time())}"
+            self.log_dir = os.path.join(log_dir, model_name, run_id)
         self.writer = None
+        self.rollout_start_time = None
 
     def _on_training_start(self) -> None:
         os.makedirs(self.log_dir, exist_ok=True)
         self.writer = SummaryWriter(self.log_dir)
         logger.info("TrainingPerformanceCallback: Training started.")
+        self.rollout_start_time = time.time()
 
     def _on_step(self) -> bool:
         # No per-step logging required; simply satisfy the abstract method.
@@ -157,7 +171,6 @@ class TrainingPerformanceCallback(BaseCallback):
     def _on_rollout_end(self) -> None:
         step = self.num_timesteps
         metrics = {}
-        # Retrieve training metrics from the model's policy (HybridPolicy)
         policy = self.model.policy
         if hasattr(policy, 'policy_loss'):
             metrics['Policy Loss'] = policy.policy_loss
@@ -168,12 +181,35 @@ class TrainingPerformanceCallback(BaseCallback):
         if hasattr(policy, 'explained_variance'):
             metrics['Explained Variance'] = policy.explained_variance
         if hasattr(policy, 'aux_loss'):
-            aux_loss_val = policy.aux_loss.item() if isinstance(policy.aux_loss, torch.Tensor) else policy.aux_loss
+            aux_loss_val = policy.aux_loss.item() if hasattr(policy.aux_loss, 'item') else policy.aux_loss
             metrics['Aux Loss'] = aux_loss_val
 
+        logger.debug("TrainingPerformanceCallback: _on_rollout_end called at step %d with metrics: %s", step, metrics)
         for key, value in metrics.items():
             self.writer.add_scalar(f"Training/{key}", value, step)
-            logger.debug(f"TrainingPerformanceCallback: Logged {key} = {value} at step {step}")
+            logger.debug("TrainingPerformanceCallback: Logged %s = %s at step %d", key, value, step)
+
+        # Log rollout duration
+        elapsed_time = time.time() - self.rollout_start_time
+        self.writer.add_scalar("Training/Rollout Duration", elapsed_time, step)
+        logger.debug("TrainingPerformanceCallback: Logged Rollout Duration = %s at step %d", elapsed_time, step)
+
+        # Log gradient norms
+        total_norm = 0
+        for p in self.model.parameters():
+            if p.grad is not None:
+                total_norm += p.grad.data.norm(2).item() ** 2
+        total_norm = total_norm ** 0.5
+        self.writer.add_scalar("Training/Gradient Norm", total_norm, step)
+        logger.debug("TrainingPerformanceCallback: Logged Gradient Norm = %s at step %d", total_norm, step)
+
+        # Log current learning rate
+        current_lr = self.model.optimizer.param_groups[0]['lr']
+        self.writer.add_scalar("Training/Learning Rate", current_lr, step)
+        logger.debug("TrainingPerformanceCallback: Logged Learning Rate = %s at step %d", current_lr, step)
+
+        # Reset the rollout start time for the next rollout
+        self.rollout_start_time = time.time()
 
     def _on_training_end(self) -> None:
         if self.writer:

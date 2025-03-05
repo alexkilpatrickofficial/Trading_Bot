@@ -7,12 +7,13 @@ Heavy penalties are returned if known errors occur (e.g. abnormal terminations).
 
 import os
 import glob
+import hashlib
 import torch
 import numpy as np
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import CallbackList
 from ga_utils import get_tensorboard_gen_log_dir, calculate_sharpe_ratio, save_ga_state
-from chromosome import validate_chromosome, modular_shape_is_valid, random_chromosome
+from chromosome import validate_chromosome, modular_shape_is_valid, random_chromosome, MAX_BLOCKS
 from models import DynamicHybridFeatureExtractor
 from envs.multi_stock_env import MultiStockTradingEnv  # Adjust if needed
 from model_saver import save_model_atomically
@@ -22,6 +23,18 @@ from config import TENSORBOARD_LOG_DIR, CONTINUOUS_FEATURES, BINARY_FEATURES, TO
 from hybrid_policy import HybridPolicy
 
 HEAVY_PENALTY = (-1e6, -1e6, 1e6)
+
+def get_model_config_id(chromosome):
+    """
+    Generate a unique identifier for the hybrid model configuration
+    based on the chromosome. We use the first part of the chromosome that defines the model.
+    """
+    # For instance, use the configuration for the modular blocks:
+    config_elements = chromosome[:4 + MAX_BLOCKS * 5]  # adjust slice as appropriate
+    config_str = '_'.join(str(x) for x in config_elements)
+    # Create a short hash from the configuration string
+    config_hash = hashlib.md5(config_str.encode('utf-8')).hexdigest()[:8]
+    return f"hybrid_{config_hash}"
 
 def evaluate(individual, **kwargs):
     """
@@ -86,6 +99,10 @@ def evaluate(individual, **kwargs):
         print(f"Invalid architecture shape for {individual.id}")
         return HEAVY_PENALTY
 
+    # Create a unique configuration ID from the chromosome.
+    config_id = get_model_config_id(validated_chrom)
+    print(f"Configuration ID: {config_id}")
+
     total_timesteps = int(validated_chrom[-3])
     print("Total timesteps for training:", total_timesteps)
     forced_gamma = 0.99
@@ -144,11 +161,13 @@ def evaluate(individual, **kwargs):
             print(f"Error loading model: {e}")
     if model is None:
         print(f"Creating new PPO model for {individual.id}")
+        # Use an aggregated log directory for training logs based on configuration.
+        agg_tb_log_dir = os.path.join(get_tensorboard_gen_log_dir(current_gen, log_dir=TENSORBOARD_LOG_DIR), config_id)
         model = PPO(
             policy=HybridPolicy,
             env=env,
             verbose=1,
-            tensorboard_log=get_tensorboard_gen_log_dir(current_gen, log_dir=TENSORBOARD_LOG_DIR) + f"/ind_{individual.id}",
+            tensorboard_log=agg_tb_log_dir,
             learning_rate=validated_chrom[0],
             gamma=forced_gamma,
             ent_coef=forced_ent_coef,
@@ -161,19 +180,21 @@ def evaluate(individual, **kwargs):
     # 4) Training phase.
     try:
         if do_train and model.num_timesteps < min_train_timesteps:
-            # Import the additional callback for logging training performance.
             from callbacks import TensorBoardCallback, CheckpointCallback, EarlyStoppingCallback, TrainingPerformanceCallback
             
+            # Build an aggregated log directory (per configuration) for training callbacks.
+            agg_log_dir = os.path.join(get_tensorboard_gen_log_dir(current_gen, log_dir=TENSORBOARD_LOG_DIR), config_id)
             tb_callback = TensorBoardCallback(
                 model_name="PPO_TradingHybrid",
-                run_id=f"gen_{current_gen}_ind_{individual.id}",
-                log_dir=get_tensorboard_gen_log_dir(current_gen, log_dir=TENSORBOARD_LOG_DIR)
+                log_dir=agg_log_dir,
+                aggregate=True
             )
-            # Lower the save frequency to 1000 steps so checkpoints occur more frequently.
             ckpt_callback = CheckpointCallback(save_freq=1000, model_path=model_path, verbose=1)
             early_stop = EarlyStoppingCallback(patience=20, repeat_threshold=32, verbose=1)
             tp_callback = TrainingPerformanceCallback(
-                log_dir=get_tensorboard_gen_log_dir(current_gen, log_dir=TENSORBOARD_LOG_DIR) + f"/training_ind_{individual.id}"
+                log_dir=agg_log_dir,
+                aggregate=True,
+                model_name="TrainingPerformance"
             )
             callback_list = CallbackList([tb_callback, ckpt_callback, early_stop, tp_callback])
             print(f"Training model for {individual.id} starting from {model.num_timesteps} timesteps.")
