@@ -2,6 +2,8 @@
 
 A **Genetic Algorithm (GA)** project that evolves **chromosomes** (architectures) for a **Hybrid PPO** trading model in a cryptocurrency environment. This system combines **reinforcement learning** (via [Stable-Baselines3 PPO](https://github.com/DLR-RM/stable-baselines3)) with an **auxiliary price prediction** head to improve feature extraction and trading performance.
 
+**Note**: This project specifically uses the [Gemini_BTCUSD_1h.csv](https://www.cryptodatadownload.com/cdd/Gemini_BTCUSD_1h.csv) dataset as its foundational dataset for training and evaluation. You can download it directly from [CryptoDataDownload](https://www.cryptodatadownload.com/data/gemini/) if you do not already have it.
+
 ---
 
 ## Table of Contents
@@ -177,3 +179,4 @@ This project is licensed under the **GRU Public License**.
   - Email: [alexkilpatrick@proton.me](mailto:alexkilpatrick@proton.me)
 
 Feel free to open an issue on GitHub if you encounter any problems or have suggestions. Enjoy experimenting with this Hybrid PPO + GA approach for crypto trading!
+
