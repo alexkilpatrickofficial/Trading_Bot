@@ -68,6 +68,9 @@ class TensorBoardCallback(BaseCallback):
 class CheckpointCallback(BaseCallback):
     """
     Custom callback that saves the model at regular intervals during training.
+    Instead of creating a new checkpoint file at every save, a fixed checkpoint filename
+    is used (overwriting the previous checkpoint) so that only one checkpoint is maintained.
+    Additionally, the checkpoint file is removed at training end if training completes successfully.
     """
     def __init__(self, save_freq: int, model_path: str, verbose: int = 1):
         super(CheckpointCallback, self).__init__(verbose)
@@ -85,12 +88,22 @@ class CheckpointCallback(BaseCallback):
     def _on_step(self) -> bool:
         if (self.n_calls - self.last_step_save) >= self.save_freq:
             self.last_step_save = self.n_calls
-            step_str = f"_step{self.num_timesteps}"
-            partial_model_path = self.model_path.replace(".zip", f"{step_str}.zip")
-            save_model_atomically(self.model, partial_model_path)
+            # Use a fixed checkpoint filename by replacing ".zip" with "_checkpoint.zip"
+            checkpoint_path = self.model_path.replace(".zip", "_checkpoint.zip")
+            save_model_atomically(self.model, checkpoint_path)
             if self.verbose > 0:
-                logger.info(f"[CheckpointCallback] Model checkpoint saved at {partial_model_path}")
+                logger.info(f"[CheckpointCallback] Model checkpoint saved at {checkpoint_path}")
         return True
+
+    def _on_training_end(self) -> None:
+        # Remove the checkpoint file after successful training.
+        checkpoint_path = self.model_path.replace(".zip", "_checkpoint.zip")
+        if os.path.exists(checkpoint_path):
+            try:
+                os.remove(checkpoint_path)
+                logger.info(f"[CheckpointCallback] Checkpoint file {checkpoint_path} removed after training completion.")
+            except Exception as e:
+                logger.error(f"[CheckpointCallback] Failed to remove checkpoint file {checkpoint_path}: {e}")
 
 class EarlyStoppingCallback(BaseCallback):
     """
@@ -143,7 +156,7 @@ class TrainingPerformanceCallback(BaseCallback):
     """
     Custom callback to log detailed training performance metrics to TensorBoard.
     This includes policy loss, value loss, total loss, explained variance, and auxiliary loss.
-    Additional metrics such as gradient norm and learning rate are logged for diagnostic purposes.
+    Additional metrics such as gradient norm, learning rate, and rollout duration are logged for diagnostics.
     Metrics are retrieved from the model's policy.
     If aggregate is True, a common log directory is used.
     """
@@ -165,7 +178,6 @@ class TrainingPerformanceCallback(BaseCallback):
         self.rollout_start_time = time.time()
 
     def _on_step(self) -> bool:
-        # No per-step logging required; simply satisfy the abstract method.
         return True
 
     def _on_rollout_end(self) -> None:
@@ -208,7 +220,6 @@ class TrainingPerformanceCallback(BaseCallback):
         self.writer.add_scalar("Training/Learning Rate", current_lr, step)
         logger.debug("TrainingPerformanceCallback: Logged Learning Rate = %s at step %d", current_lr, step)
 
-        # Reset the rollout start time for the next rollout
         self.rollout_start_time = time.time()
 
     def _on_training_end(self) -> None:

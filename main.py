@@ -24,6 +24,9 @@ from models import ModularBlock, DynamicHybridFeatureExtractor
 from config import LOG_DIR, CACHE_FILE_NAME, OUTPUT_H5_FILE
 from callbacks import TensorBoardCallback, CheckpointCallback, EarlyStoppingCallback
 
+# Import cleanup functions from model_cleanup.py
+from model_cleanup import scan_and_cleanup_models, cleanup_logs, scan_and_merge_tensorboard_logs
+
 logger = logging.getLogger(__name__)
 
 def launch_tensorboard(log_dir, port=6006):
@@ -62,7 +65,29 @@ def reinitialize_individual(toolbox, stock_data, log_dir, max_attempts=3):
 def main():
     setup_logging()
     logger.info("Starting GA optimization process...")
-    
+
+    # --- Duplicate Scan & Cleanup Before Training ---
+    run_cleanup = input("Do you want to scan for duplicate model checkpoints and logs? [y/N]: ").strip().lower()
+    if run_cleanup == 'y':
+        bulk_cleanup = input("Run in bulk cleanup mode? (Automatically delete/merge duplicates) [y/N]: ").strip().lower() == 'y'
+        # Clean up duplicate model checkpoints
+        models_dir = os.path.join(os.getcwd(), "models")
+        logger.info("Scanning for duplicate model checkpoints in: %s", models_dir)
+        scan_and_cleanup_models(models_dir, bulk=bulk_cleanup)
+        
+        # Clean up rotated log files
+        logs_dir = LOG_DIR  # Using the main logs folder from config
+        logger.info("Scanning for duplicate rotated log files in: %s", logs_dir)
+        cleanup_logs(logs_dir, "trading_env.log.*", keep=1)
+        cleanup_logs(logs_dir, "events.out.tfevents.*", keep=1)
+        
+        # Merge duplicate TensorBoard log subdirectories
+        # Assuming TensorBoard logs are stored under: LOG_DIR/tensorboard_logs/generation_X/
+        tb_generation_dir = os.path.join(LOG_DIR, "tensorboard_logs", "generation_1")  # Adjust generation as needed
+        logger.info("Merging duplicate TensorBoard log subdirectories in: %s", tb_generation_dir)
+        scan_and_merge_tensorboard_logs(tb_generation_dir, bulk=bulk_cleanup)
+    # --- End Duplicate Scan & Cleanup ---
+
     # 1) Initialize DEAP creator classes
     init_deap_creators()
 
